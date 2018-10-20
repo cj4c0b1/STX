@@ -21,17 +21,63 @@ print 'Importing Libraries:'
 import numpy as np
 import matplotlib.pyplot as pl
 
-print 'Simulating...'
-print ''
+print 'Lendo Arquivo...'
 
-def condiciona(x):
-	N = int(np.ceil(np.log2(len(x))))
-	
-	for n in range(len(x),2**N):
-		x = np.append(x, 0)
+# Media Movel
+def mmovel(x,theta,s):
+	N = len(x)
+	ki = -int(np.floor(theta*(s-1)))
+	ka = int(np.ceil((1-theta)*(s-1)))
+	y = []
+	for t in range(N):
+		ac = 0
+		nu = 0
+		for k in range(ki,ka):
+			if t-k >= 0 and t-k < N:
+				ac = ac + x[t-k]
+				nu = nu + 1
+		y = np.append(y, ac/nu)
 		
-	return x
+	return y
 
+# Segmentacao da lista	
+def split(x,s):
+	N = len(x)
+	n = 0
+	ts = 0
+	t = []
+	y = []
+	while(n < N):
+		t.append(x[n])
+		n = n + 1
+		ts = ts + 1
+		if ts >= s:
+			ts = 0
+			y.append(t)
+			t = []
+	return y
+
+# Media quadratica
+def rms(xv):
+	z = []
+	for x in xv:
+		s = len(x)
+		ac = 0
+		for xi in x:
+			ac = ac + xi**2
+		z.append(np.sqrt(ac/s))
+	return z
+	
+# Medida canonica
+def medida(fv,qe):
+	den = 0
+	for f in fv:
+		den = den + f**qe
+	z = []
+	for f in fv:
+		z.append((f**qe)/den)
+	return z
+	
 #############################################
 ## LE ARQUIVO                               #
 #############################################
@@ -45,59 +91,80 @@ for line in fpt:
 	p = np.append(p, float(row[6]))
 p = np.flip(p,0)		# Reverte a ordem
 
+print 'Simulando...'
+print ''
+
 #############################################
 ## CALCULA RETORNOS                         #
 #############################################
-ret = np.array([])
+f = np.array([])
 for n in range(0,len(p)-1):
-	ret = np.append(ret,np.log(p[n+1])-np.log(p[n]))
+	f = np.append(f,np.log(p[n+1])-np.log(p[n]))
+N = len(f)
 
-# Transorma para um processo ilimitado
-r = np.cumsum(ret)-np.mean(ret)
+# Expoentes
+Nq = 40
+q_space = np.linspace(-10,10,Nq)
 
-q = np.linspace(-15,15,100)
-h = []
+# Soma acumulada
+F = np.cumsum(f)-np.mean(f)
 
-for qi in q:
-	fluc = []
-	x = []
-	for s in range(100):
-		# Divide em janelas
-		Ns = s+1
-		b = np.array_split(r, Ns)
+na = [[] for n in range(Nq)]
+nf = [[] for n in range(Nq)]
+da = [[] for n in range(Nq)]
+
+for s in range(4,40):
+	# Tendencia
+	Y = mmovel(F,0.5,s)
+	# Residuo
+	X = [Fi-Yi for Fi,Yi in zip(F,Y)]
+	# Divide
+	Xv = split(X,s)
+	# RMS
+	Fv = rms(Xv)
 	
-		# Remove tendencia e encontra flutuacao
-		f = 0
-		for w in range(Ns):
-			c = np.polyfit(np.arange(len(b[w])),b[w],1)
-			p = np.poly1d(c)
-			y = [p(n) for n in np.arange(len(b[w]))]
-			if qi != 0:
-				z = np.sum([((yi-bi)**2)**(qi/2) for yi,bi in zip(y,b[w])])/len(y)
-			else:
-				z = np.sum([np.log((yi-bi)**2) for yi,bi in zip(y,b[w])])/(2*len(y))
-			f = f + z/Ns
-		
-		if qi != 0:
-			fluc = np.append(fluc, f**(1.0/qi))
-		else:
-			fluc = np.append(fluc, np.exp(f))
-		x = np.append(x, len(r)/Ns)
-	
-	xl = [np.log(xi) for xi in x]
-	yl = [np.log(fi) for fi in fluc]
-	
-	a = np.cov(xl,yl)[0][1]/np.var(xl)
-	b = np.mean(yl)-a*np.mean(xl)
-	yf = [a*xi+b for xi in xl]
-	
-	h = np.append(h, a)
+	nq = 0
+	for q in q_space:
+		# Medida canonica
+		mu = medida(Fv,q)
+		# Alfa
+		na[nq].append(np.sum([mui*np.log(Fvi) for mui,Fvi in zip(mu,Fv)]))
+		da[nq].append(np.log(s))
+		# f(a)
+		nf[nq].append(np.sum([mui*np.log(mui) for mui in mu]))
+		nq = nq + 1
 
+# Alfa e f(alfa)
+alfa = []
+fa = []
+for n in range(Nq):
+	C = np.polyfit(da[n],na[n],1)[0]
+	alfa.append(C)
+	C = np.polyfit(da[n],nf[n],1)[0]
+	fa.append(C)
 
-a = [h[n]+q[n]*(h[n+1]-h[n])/0.1 for n in range(len(q)-1)]
-f = [q[n]*(a[n]-h[n])+1 for n in range(len(a))] 
+# Dq
+D = []
+T = []
+for n in range(Nq):
+	q = q_space[n]
+	a = alfa[n]
+	f = fa[n]
+	
+	tau = q*a-f
+	Dq = tau/(q-1)
+	
+	D.append(Dq)
+	T.append(tau) 
 
-pl.plot(a,f,'o')
+# Plot
+pl.plot(alfa,fa,'o-')
+pl.plot(alfa,alfa,'--')
+pl.plot(fa,fa,'--')
+#pl.plot(q_space,T,'o-')
+#pl.plot(q_space,alfa,'o-')
+#pl.axis([0,0.88,0,1.75])
+#pl.plot(q_space,D,'o')
+#pl.savefig('multifrac1.svg')
 pl.show()
-
 
